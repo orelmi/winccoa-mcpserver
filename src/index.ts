@@ -56,14 +56,11 @@ async function mainSse()
 	const PORT = process.env.PORT || 3001;
 
 	const server = app.listen(PORT, () => {
-	  console.log(`✅ Server is running at http://localhost:${PORT}`);
+	  //console.log(`✅ Server is running at http://localhost:${PORT}`);
 	});
 	
 	server.on('upgrade', (request, socket, head) => {
-	console.log(request.headers.host);
-	console.log(request.url);
 	  const pathname = new URL(request.url!, `http://${request.headers.host}`).pathname;
-	console.log(pathname);
 	  if (pathname === '/ws') {
 	    wss.handleUpgrade(request, socket, head, (ws) => {
 	      wss.emit('connection', ws, request);
