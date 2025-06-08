@@ -2,6 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import express, { Request, Response } from "express";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+
+
 import http from "http";
 import WebSocket, {WebSocketServer} from "ws"
 
@@ -206,13 +210,56 @@ mcpServer.tool(
   },
 );
 
-async function main() {
+async function mainStdio() {
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
   console.error("WinCC OA MCP mcpServer running on stdio");
 }
 
-main().catch((error) => {
+async function mainSse()
+{
+	const app = express();
+
+	// to support multiple simultaneous connections we have a lookup object from
+	// sessionId to transport
+	const transports: { [sessionId: string]: SSEServerTransport } = {};
+
+	app.get("/sse", async (req: Request, res: Response) => {
+	  // Get the full URI from the request
+	  const host = req.get("host");
+
+	  const fullUri = `https://${host}/jokes`;
+	  const transport = new SSEServerTransport(fullUri, res);
+
+	  transports[transport.sessionId] = transport;
+	  res.on("close", () => {
+		delete transports[transport.sessionId];
+	  });
+	  await mcpServer.connect(transport);
+	});
+
+	app.post("/jokes", async (req: Request, res: Response) => {
+	  const sessionId = req.query.sessionId as string;
+	  const transport = transports[sessionId];
+	  if (transport) {
+		await transport.handlePostMessage(req, res);
+	  } else {
+		res.status(400).send("No transport found for sessionId");
+	  }
+	});
+
+	app.get("/", (_req, res) => {
+	  res.send("The Jokes MCP server is running!");
+	});
+
+	const PORT = process.env.PORT || 3001;
+
+	app.listen(PORT, () => {
+	  console.log(`✅ Server is running at http://localhost:${PORT}`);
+	});
+}
+
+mainSse().catch((error) => {
   console.error("Fatal error in main():", error);
   process.exit(1);
 });
