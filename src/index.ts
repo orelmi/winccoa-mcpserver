@@ -4,12 +4,8 @@ import { z } from "zod";
 
 import express, { Request, Response } from "express";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-
-
 import http from "http";
 import WebSocket, {WebSocketServer} from "ws"
-
-const HTTP_PORT = 9151;
 
 // Create mcpServer instance
 const mcpServer = new McpServer({
@@ -56,7 +52,19 @@ async function mainSse()
 	const app = express();
 	const server = http.createServer(app);
 	// Attach WebSocket server to the HTTP server
-	const wss = new WebSocketServer({ server });
+	const wss = new WebSocketServer({ noServer: true });
+	
+	server.on('upgrade', (request, socket, head) => {
+	  const pathname = new URL(request.url!, `http://${request.headers.host}`).pathname;
+
+	  if (pathname === '/ws') {
+	    wss.handleUpgrade(request, socket, head, (ws) => {
+	      wss.emit('connection', ws, request);
+	    });
+	  } else {
+	    socket.destroy();
+	  }
+	});
 
 	// to support multiple simultaneous connections we have a lookup object from
 	// sessionId to transport
@@ -87,7 +95,7 @@ async function mainSse()
 	});
 
 	app.get("/", (_req, res) => {
-	  res.send("The Jokes MCP server is running!");
+	  res.send("The WinCC OA MCP server is running!");
 	});
 	
 	
