@@ -107,6 +107,10 @@ async function mainSse()
 	
 	// Create HTTP server with websocket support
 	const serverHttp = http.createServer(app);
+	
+
+	// WebSocket server setup
+	const wss = new WebSocketServer({ noServer: true });
 	serverHttp.on("upgrade", (request, socket, head) => {
 	  if (request.url === "/ws") {
 	    wss.handleUpgrade(request, socket, head, (ws) => {
@@ -116,10 +120,7 @@ async function mainSse()
 	    socket.destroy();
 	  }
 	});
-
-	// WebSocket server setup
-	const wss = new WebSocketServer({ server: serverHttp });
-
+	
 	// Événement déclenché lorsque le serveur WebSocket reçoit une connexion
 	wss.on('connection', (ws: WebSocket) => {
 		//console.log('Client connecté');
