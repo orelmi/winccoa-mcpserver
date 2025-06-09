@@ -3,18 +3,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import express, { Request, Response } from "express";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import http from "http";
 import WebSocket, {WebSocketServer} from "ws"
 
 // Create mcpServer instance
 const mcpServer = new McpServer({
-  name: "winccoa",
-  version: "1.0.0",
-  capabilities: {
-    resources: {},
-    tools: {},
-  },
+  name: "winccoa-mcp-streamable-http",
+  version: "1.0.0"
 });
 
 
@@ -50,60 +46,79 @@ async function mainStdio() {
 async function mainSse()
 {
 	const app = express();
-	// Attach WebSocket server to the HTTP server
-	const wss = new WebSocketServer({ noServer:true });
+	app.use(express.json());
 	
-	const PORT = process.env.PORT || 3001;
+	const transport: StreamableHTTPServerTransport =
+	  new StreamableHTTPServerTransport({
+		sessionIdGenerator: undefined, // set to undefined for stateless servers
+	  });
 
-	const server = app.listen(PORT, () => {
-	  //console.log(`✅ Server is running at http://localhost:${PORT}`);
+	// Setup routes for the mcp server
+	const setupServer = async () => {
+	  await mcpServer.connect(transport);
+	};
+
+	app.post("/mcp", async (req: Request, res: Response) => {
+	  console.log("Received MCP request:", req.body);
+	  try {
+		await transport.handleRequest(req, res, req.body);
+	  } catch (error) {
+		console.error("Error handling MCP request:", error);
+		if (!res.headersSent) {
+		  res.status(500).json({
+			jsonrpc: "2.0",
+			error: {
+			  code: -32603,
+			  message: "Internal server error",
+			},
+			id: null,
+		  });
+		}
+	  }
+	});
+
+	app.get("/mcp", async (req: Request, res: Response) => {
+	  console.log("Received GET MCP request");
+	  res.writeHead(405).end(
+		JSON.stringify({
+		  jsonrpc: "2.0",
+		  error: {
+			code: -32000,
+			message: "Method not allowed.",
+		  },
+		  id: null,
+		})
+	  );
+	});
+
+	app.delete("/mcp", async (req: Request, res: Response) => {
+	  console.log("Received DELETE MCP request");
+	  res.writeHead(405).end(
+		JSON.stringify({
+		  jsonrpc: "2.0",
+		  error: {
+			code: -32000,
+			message: "Method not allowed.",
+		  },
+		  id: null,
+		})
+	  );
 	});
 	
-	server.on('upgrade', (request, socket, head) => {
-	  const pathname = new URL(request.url!, `http://${request.headers.host}`).pathname;
-	  if (pathname === '/ws') {
+	// Create HTTP server with websocket support
+	const serverHttp = http.createServer(app);
+	serverHttp.on("upgrade", (request, socket, head) => {
+	  if (request.url === "/ws") {
 	    wss.handleUpgrade(request, socket, head, (ws) => {
-	      wss.emit('connection', ws, request);
+	      wss.emit("connection", ws, request);
 	    });
 	  } else {
 	    socket.destroy();
 	  }
 	});
 
-	// to support multiple simultaneous connections we have a lookup object from
-	// sessionId to transport
-	const transports: { [sessionId: string]: SSEServerTransport } = {};
-
-	app.get("/sse", async (req: Request, res: Response) => {
-	  // Get the full URI from the request
-	  const host = req.get("host");
-
-	  const fullUri = `https://${host}/jokes`;
-	  const transport = new SSEServerTransport(fullUri, res);
-
-	  transports[transport.sessionId] = transport;
-	  res.on("close", () => {
-		delete transports[transport.sessionId];
-	  });
-	  await mcpServer.connect(transport);
-	});
-
-	app.post("/jokes", async (req: Request, res: Response) => {
-	  const sessionId = req.query.sessionId as string;
-	  const transport = transports[sessionId];
-	  if (transport) {
-		await transport.handlePostMessage(req, res);
-	  } else {
-		res.status(400).send("No transport found for sessionId");
-	  }
-	});
-
-	app.get("/", (_req, res) => {
-	  res.send("The WinCC OA MCP server is running!");
-	});
-	
-	
-	
+	// WebSocket server setup
+	const wss = new WebSocketServer({ server: serverHttp });
 
 	// Événement déclenché lorsque le serveur WebSocket reçoit une connexion
 	wss.on('connection', (ws: WebSocket) => {
@@ -134,6 +149,18 @@ async function mainSse()
 		});
 	});
 
+	// Start the server
+	const PORT = process.env.PORT || 3001;
+	setupServer()
+	  .then(() => {
+		serverHttp.listen(PORT, () => {
+		  console.log(`MCP Streamable HTTP Server listening on port ${PORT}`);
+		});
+	  })
+	  .catch((error) => {
+		console.error("Failed to set up the server:", error);
+		process.exit(1);
+	  });
 	
 }
 
